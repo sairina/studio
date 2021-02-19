@@ -169,6 +169,8 @@ export function createContentNode(context, { parent, kind, ...payload }) {
     tags: {},
     extra_fields: {},
     [NEW_OBJECT]: true,
+    total_count: 0,
+    resource_count: 0,
     complete: false,
     changed: true,
     language: session.preferences ? session.preferences.language : session.currentLanguage,
@@ -178,6 +180,11 @@ export function createContentNode(context, { parent, kind, ...payload }) {
     ...payload,
   };
 
+  contentNodeData.complete = isNodeComplete({
+    nodeDetails: contentNodeData,
+    assessmentItems: [],
+    files: [],
+  });
   return ContentNode.put(contentNodeData).then(id => {
     context.commit('ADD_CONTENTNODE', {
       id,
@@ -239,8 +246,8 @@ function generateContentNodeData({
   }
   if (extra_fields !== NOVALUE) {
     contentNodeData.extra_fields = contentNodeData.extra_fields || {};
-    if (extra_fields.type) {
-      contentNodeData.extra_fields.type = extra_fields.type;
+    if (extra_fields.mastery_model) {
+      contentNodeData.extra_fields.mastery_model = extra_fields.mastery_model;
     }
     if (extra_fields.m) {
       contentNodeData.extra_fields.m = extra_fields.m;
@@ -248,7 +255,7 @@ function generateContentNodeData({
     if (extra_fields.n) {
       contentNodeData.extra_fields.n = extra_fields.n;
     }
-    if (extra_fields.randomize) {
+    if (extra_fields.randomize !== undefined) {
       contentNodeData.extra_fields.randomize = extra_fields.randomize;
     }
   }
@@ -270,8 +277,22 @@ export function updateContentNode(context, { id, ...payload } = {}) {
     throw ReferenceError('id must be defined to update a contentNode');
   }
   let contentNodeData = generateContentNodeData(payload);
+
+  const node = context.getters.getContentNode(id);
+
+  // Don't overwrite existing extra_fields data
+  if (contentNodeData.extra_fields) {
+    contentNodeData = {
+      ...contentNodeData,
+      extra_fields: {
+        ...(node.extra_fields || {}),
+        ...(contentNodeData.extra_fields || {}),
+      },
+    };
+  }
+
   const newNode = {
-    ...context.getters.getContentNode(id),
+    ...node,
     ...contentNodeData,
   };
   const complete = isNodeComplete({

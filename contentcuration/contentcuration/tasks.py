@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from __future__ import unicode_literals
 
 import logging
+import time
 from builtins import str
 
 from celery.decorators import task
@@ -10,6 +11,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.core.mail import EmailMessage
 from django.db import IntegrityError
+from django.db.utils import OperationalError
 from django.template.loader import render_to_string
 from django.utils import translation
 from django.utils.translation import ugettext as _
@@ -22,12 +24,14 @@ from contentcuration.utils.csv_writer import write_channel_csv_file
 from contentcuration.utils.csv_writer import write_user_csv
 from contentcuration.utils.nodes import generate_diff
 from contentcuration.utils.publish import publish_channel
+from contentcuration.utils.sentry import report_exception
 from contentcuration.utils.sync import sync_channel
 from contentcuration.utils.user import CACHE_USER_STORAGE_KEY
 from contentcuration.viewsets.sync.constants import CHANNEL
 from contentcuration.viewsets.sync.constants import CONTENTNODE
 from contentcuration.viewsets.sync.constants import COPYING_FLAG
 from contentcuration.viewsets.sync.utils import generate_update_event
+from contentcuration.viewsets.user import AdminUserFilter
 
 
 logger = get_task_logger(__name__)
@@ -56,6 +60,64 @@ if settings.RUNNING_TESTS:
 # runs the management command 'exportchannel' async through celery
 
 
+@task(bind=True, name="delete_node_task")
+def delete_node_task(
+    self,
+    user_id,
+    channel_id,
+    node_id,
+):
+    node = ContentNode.objects.get(id=node_id)
+
+    deleted = False
+    attempts = 0
+    try:
+        while not deleted and attempts < 10:
+            try:
+                node.delete()
+                deleted = True
+            except OperationalError as e:
+                if "deadlock detected" in e.args[0]:
+                    pass
+                else:
+                    raise
+    except Exception as e:
+        report_exception(e)
+
+
+@task(bind=True, name="move_nodes_task")
+def move_nodes_task(
+    self,
+    user_id,
+    channel_id,
+    target_id,
+    node_id,
+    position="last-child",
+):
+    node = ContentNode.objects.get(id=node_id)
+    target = ContentNode.objects.get(id=target_id)
+
+    moved = False
+    attempts = 0
+    try:
+        while not moved and attempts < 10:
+            try:
+                node.move_to(
+                    target,
+                    position,
+                )
+                moved = True
+            except OperationalError as e:
+                if "deadlock detected" in e.args[0]:
+                    pass
+                else:
+                    raise
+    except Exception as e:
+        report_exception(e)
+
+    return {"changes": [generate_update_event(node.pk, CONTENTNODE, {"parent": node.parent_id})]}
+
+
 @task(bind=True, name="duplicate_nodes_task")
 def duplicate_nodes_task(
     self,
@@ -79,7 +141,7 @@ def duplicate_nodes_task(
     ).exists()
 
     try:
-        source.copy_to(
+        new_node = source.copy_to(
             target,
             position,
             pk,
@@ -93,7 +155,9 @@ def duplicate_nodes_task(
         # Possible we might want to raise an error here, but not clear
         # whether this could then be a way to sniff for ids
         pass
-    return {"changes": [generate_update_event(pk, CONTENTNODE, {COPYING_FLAG: False})]}
+    return {"changes": [
+        generate_update_event(pk, CONTENTNODE, {COPYING_FLAG: False, "node_id": new_node.node_id})
+    ]}
 
 
 @task(bind=True, name="export_channel_task")
@@ -210,8 +274,21 @@ def calculate_user_storage_task(user_id):
     cache.delete(CACHE_USER_STORAGE_KEY.format(user_id))
 
 
+@task(name="sendcustomemails_task")
+def sendcustomemails_task(subject, message, query):
+    subject = render_to_string('registration/custom_email_subject.txt', {'subject': subject})
+    recipients = AdminUserFilter(data=query).qs.distinct()
+
+    for recipient in recipients:
+        text = message.format(current_date=time.strftime("%A, %B %d"), current_time=time.strftime("%H:%M %Z"), **recipient.__dict__)
+        text = render_to_string('registration/custom_email.txt', {'message': text})
+        recipient.email_user(subject, text, settings.DEFAULT_FROM_EMAIL, )
+
+
 type_mapping = {
     "duplicate-nodes": {"task": duplicate_nodes_task, "progress_tracking": True},
+    "move-nodes": {"task": move_nodes_task, "progress_tracking": False},
+    "delete-node": {"task": delete_node_task, "progress_tracking": False},
     "export-channel": {"task": export_channel_task, "progress_tracking": True},
     "sync-channel": {"task": sync_channel_task, "progress_tracking": True},
     "get-node-diff": {"task": generatenodediff_task, "progress_tracking": False},
@@ -253,8 +330,10 @@ def create_async_task(task_name, user, apply_async=True, **task_args):
     if task_name not in type_mapping:
         raise KeyError("Need to define task in type_mapping first.")
     metadata = {"affects": {}}
+    channel_id = None
     if "channel_id" in task_args:
-        metadata["affects"]["channel"] = task_args["channel_id"]
+        channel_id = task_args["channel_id"]
+        metadata["affects"]["channel"] = channel_id
 
     if "node_ids" in task_args:
         metadata["affects"]["nodes"] = task_args["node_ids"]
@@ -274,6 +353,7 @@ def create_async_task(task_name, user, apply_async=True, **task_args):
         is_progress_tracking=is_progress_tracking,
         user=user,
         metadata=metadata,
+        channel_id=channel_id,
     )
     if apply_async:
         task = async_task.apply_async(kwargs=task_args, task_id=str(task_info.task_id))

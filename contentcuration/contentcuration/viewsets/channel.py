@@ -22,6 +22,9 @@ from rest_framework.permissions import AllowAny
 from rest_framework.permissions import IsAdminUser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.serializers import CharField
+from rest_framework.serializers import FloatField
+from rest_framework.serializers import IntegerField
 
 from contentcuration.decorators import cache_no_user_data
 from contentcuration.models import Channel
@@ -40,6 +43,7 @@ from contentcuration.viewsets.base import RequiredFilterSet
 from contentcuration.viewsets.base import ValuesViewset
 from contentcuration.viewsets.common import CatalogPaginator
 from contentcuration.viewsets.common import ContentDefaultsSerializer
+from contentcuration.viewsets.common import JSONFieldDictSerializer
 from contentcuration.viewsets.common import SQCount
 from contentcuration.viewsets.common import SQSum
 from contentcuration.viewsets.common import UUIDInFilter
@@ -224,12 +228,21 @@ class ChannelFilter(BaseChannelFilter):
         )
 
 
+class ThumbnailEncodingFieldsSerializer(JSONFieldDictSerializer):
+    base64 = CharField(allow_blank=True)
+    orientation = IntegerField(required=False)
+    scale = FloatField(required=False)
+    startX = FloatField(required=False)
+    startY = FloatField(required=False)
+
+
 class ChannelSerializer(BulkModelSerializer):
     """
     This is a write only serializer - we leverage it to do create and update
     operations, but read operations are handled by the Viewset.
     """
 
+    thumbnail_encoding = ThumbnailEncodingFieldsSerializer(required=False)
     bookmark = serializers.BooleanField(required=False)
     content_defaults = ContentDefaultsSerializer(partial=True, required=False)
 
@@ -247,8 +260,6 @@ class ChannelSerializer(BulkModelSerializer):
             "bookmark",
             "content_defaults",
             "source_domain",
-            "source_url",
-            "demo_server_url",
         )
         read_only_fields = ("version",)
         list_serializer_class = BulkListSerializer
@@ -382,6 +393,7 @@ class ChannelViewSet(ValuesViewset):
         queryset = super(ChannelViewSet, self).get_queryset()
         user_id = not self.request.user.is_anonymous() and self.request.user.id
         user_queryset = User.objects.filter(id=user_id)
+        queryset = queryset.order_by(self.request.GET.get("sortBy", "") or "name")
 
         return queryset.annotate(
             edit=Exists(user_queryset.filter(editable_channels=OuterRef("id"))),
@@ -563,9 +575,29 @@ class AdminChannelFilter(BaseChannelFilter):
         )
 
 
+class AdminChannelSerializer(ChannelSerializer):
+    """
+    This is a write only serializer - we leverage it to do create and update
+    operations, but read operations are handled by the Viewset.
+    """
+    class Meta:
+        model = Channel
+        fields = (
+            "id",
+            "deleted",
+            "source_domain",
+            "source_url",
+            "demo_server_url",
+            "public",
+        )
+        list_serializer_class = BulkListSerializer
+        nested_writes = True
+
+
 class AdminChannelViewSet(ChannelViewSet):
     pagination_class = CatalogListPagination
     permission_classes = [IsAdminUser]
+    serializer_class = AdminChannelSerializer
     filter_class = AdminChannelFilter
     filter_backends = (
         DjangoFilterBackend,

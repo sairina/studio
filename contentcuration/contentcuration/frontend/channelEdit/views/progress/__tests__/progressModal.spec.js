@@ -5,13 +5,23 @@ import { factory } from '../../../store';
 const store = factory();
 
 const task = { task: { id: 123, task_type: 'test-task' } };
+const tasks = [
+  { task: { id: 123, task_type: 'test-task' } },
+  { task: { id: 456, task_type: 'test-task-2' } },
+];
 
 function makeWrapper(computed = {}) {
   return mount(ProgressModal, {
     store,
     computed: {
+      currentTasks() {
+        return tasks;
+      },
       currentTask() {
         return task;
+      },
+      isPublishing() {
+        return true;
       },
       ...computed,
     },
@@ -19,10 +29,16 @@ function makeWrapper(computed = {}) {
 }
 
 describe('progressModal', () => {
-  it('should be hidden if there is no task', () => {
+  it('should be hidden if the user is not syncing or publishing', () => {
     let wrapper = makeWrapper({
-      currentTask() {
-        return null;
+      isSyncing() {
+        return false;
+      },
+      nothingToSync() {
+        return false;
+      },
+      isPublishing() {
+        return false;
       },
     });
     expect(wrapper.find('[data-test="progressmodal"]').exists()).toBe(false);
@@ -52,15 +68,15 @@ describe('progressModal', () => {
     expect(wrapper.find('[data-test="refresh"]').exists()).toBe(true);
   });
   it('refresh button should reload the page', () => {
-    const closeOverlay = jest.fn();
+    const cancelTaskAndClose = jest.fn();
     let wrapper = makeWrapper({
       progressPercent() {
         return 100;
       },
     });
-    wrapper.setMethods({ closeOverlay });
+    wrapper.setMethods({ cancelTaskAndClose });
     wrapper.find('[data-test="refresh"]').trigger('click');
-    expect(closeOverlay).toHaveBeenCalled();
+    expect(cancelTaskAndClose).toHaveBeenCalled();
   });
 
   describe('on cancel task', () => {
@@ -80,19 +96,19 @@ describe('progressModal', () => {
       expect(wrapper.vm.step).toBe(2);
     });
     it('clicking stop button on confirmation window should cancel the task', () => {
-      const cancelTask = jest.fn();
-      wrapper.setMethods({ cancelTask });
+      const cancelTaskAndClose = jest.fn();
+      wrapper.setMethods({ cancelTaskAndClose });
       wrapper.setData({ step: 2 });
       wrapper.find('[data-test="confirmstop"]').trigger('click');
-      expect(cancelTask).toHaveBeenCalled();
+      expect(cancelTaskAndClose).toHaveBeenCalled();
     });
     it('clicking cancel button on confirmation window should go back to progress window', () => {
-      const cancelTask = jest.fn();
-      wrapper.setMethods({ cancelTask });
+      const cancelTaskAndClose = jest.fn();
+      wrapper.setMethods({ cancelTaskAndClose });
       wrapper.setData({ step: 2 });
       wrapper.find('[data-test="cancelstop"]').trigger('click');
       expect(wrapper.vm.step).toBe(1);
-      expect(cancelTask).not.toHaveBeenCalled();
+      expect(cancelTaskAndClose).not.toHaveBeenCalled();
     });
   });
 });

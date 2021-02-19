@@ -125,10 +125,14 @@
           transform: none !important;
         }
       }
+      button svg {
+        vertical-align: baseline;
+      }
     }
 
     td {
       width: max-content;
+      white-space: nowrap;
 
       &:first-child {
         .freeze-column;

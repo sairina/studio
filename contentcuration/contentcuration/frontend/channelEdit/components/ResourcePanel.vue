@@ -35,7 +35,9 @@
         </VFlex>
         <VSpacer />
         <!-- Slot for elements like edit button -->
-        <slot name="actions"></slot>
+        <VFlex shrink>
+          <slot name="actions"></slot>
+        </VFlex>
       </VLayout>
       <Tabs v-if="isExercise" slider-color="primary">
         <VTab class="px-2" :to="{ query: { tab: 'questions' } }" exact>
@@ -433,7 +435,7 @@
           return '';
         }
 
-        const masteryModel = this.node.extra_fields.type;
+        const masteryModel = this.node.extra_fields.mastery_model;
         if (!masteryModel) {
           return this.defaultText;
         } else if (masteryModel === MasteryModelsNames.M_OF_N) {

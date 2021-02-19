@@ -534,8 +534,9 @@ class SyncTestCase(StudioAPITestCase):
     def test_update_contentnode_extra_fields(self):
         user = testdata.user()
         contentnode = models.ContentNode.objects.create(**self.contentnode_db_metadata)
-        m = 5
 
+        # Update extra_fields.m
+        m = 5
         self.client.force_authenticate(user=user)
         response = self.client.post(
             self.sync_url,
@@ -547,8 +548,8 @@ class SyncTestCase(StudioAPITestCase):
             models.ContentNode.objects.get(id=contentnode.id).extra_fields["m"], m
         )
 
+        # Update extra_fields.m
         n = 10
-
         response = self.client.post(
             self.sync_url,
             [generate_update_event(contentnode.id, CONTENTNODE, {"extra_fields.n": n})],
@@ -560,6 +561,24 @@ class SyncTestCase(StudioAPITestCase):
         )
         self.assertEqual(
             models.ContentNode.objects.get(id=contentnode.id).extra_fields["n"], n
+        )
+
+        # Update extra_fields.randomize
+        randomize = True
+        response = self.client.post(
+            self.sync_url,
+            [generate_update_event(contentnode.id, CONTENTNODE, {"extra_fields.randomize": randomize})],
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            models.ContentNode.objects.get(id=contentnode.id).extra_fields["m"], m
+        )
+        self.assertEqual(
+            models.ContentNode.objects.get(id=contentnode.id).extra_fields["n"], n
+        )
+        self.assertEqual(
+            models.ContentNode.objects.get(id=contentnode.id).extra_fields["randomize"], randomize
         )
 
     def test_update_contentnode_tags(self):
@@ -1201,6 +1220,48 @@ class CRUDTestCase(StudioAPITestCase):
         )
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.data["id"], contentnode.id)
+
+    def test_fetch_contentnode__by_parent(self):
+        user = testdata.user()
+        self.client.force_authenticate(user=user)
+
+        channel = models.Channel.objects.create(name="Test channel")
+        channel.editors.add(user)
+        channel.save()
+
+        metadata = self.contentnode_db_metadata
+        metadata.update(parent=channel.main_tree)
+        contentnode = models.ContentNode.objects.create(**metadata)
+
+        response = self.client.get(
+            reverse("contentnode-list"), format="json", data={"parent": channel.main_tree_id},
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["id"], contentnode.id)
+
+    def test_fetch_contentnode__by_node_id_channel_id(self):
+        user = testdata.user()
+        self.client.force_authenticate(user=user)
+
+        channel = models.Channel.objects.create(name="Test channel")
+        channel.editors.add(user)
+        channel.save()
+
+        metadata = self.contentnode_db_metadata
+        metadata.update(parent=channel.main_tree)
+        contentnode = models.ContentNode.objects.create(**metadata)
+
+        params = {
+            "_node_id_channel_id___in": ",".join([contentnode.node_id, channel.id]),
+        }
+
+        response = self.client.get(
+            reverse("contentnode-list"), format="json", data=params
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["id"], contentnode.id)
 
     def test_fetch_requisites(self):
         user = testdata.user()

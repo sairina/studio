@@ -91,7 +91,7 @@
       :header="$tr('unsavedChangesHeader')"
       :text="$tr('unsavedChangesText')"
     >
-      <template #buttons>
+      <template #buttons="{ close }">
         <VBtn flat @click="confirmCancel">
           {{ $tr('closeButton') }}
         </VBtn>
@@ -266,6 +266,9 @@
       return this.verifyChannel(channelId).then(() => {
         this.header = this.channel.name; // Get channel name when user enters modal
         this.updateTitleForPage();
+        if (!this.isNew) {
+          this.$refs.detailsform.validate();
+        }
       });
     },
     mounted() {
@@ -295,7 +298,9 @@
         }
       },
       updateTitleForPage() {
-        if (this.$route.params.tab === 'edit') {
+        if (this.isNew) {
+          this.updateTabTitle(this.$tr('creatingHeader'));
+        } else if (this.$route.params.tab === 'edit') {
           this.updateTabTitle(`${this.$tr('editTab')} - ${this.channel.name}`);
         } else {
           this.updateTabTitle(`${this.$tr('shareTab')} - ${this.channel.name}`);
@@ -327,7 +332,7 @@
         if (this.isNew) {
           this.REMOVE_CHANNEL(this.channel);
         }
-        this.close();
+        this.closeModal();
       },
       verifyChannel(channelId) {
         return new Promise((resolve, reject) => {
@@ -363,7 +368,7 @@
           });
         });
       },
-      close() {
+      closeModal() {
         this.$router.push({
           name: this.$route.query.last,
           params: this.$route.params,

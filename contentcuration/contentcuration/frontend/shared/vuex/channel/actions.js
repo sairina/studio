@@ -1,5 +1,6 @@
 import pickBy from 'lodash/pickBy';
 import { NOVALUE } from 'shared/constants';
+import { IGNORED_SOURCE } from 'shared/data/constants';
 import { Channel, Invitation, ChannelUser } from 'shared/data/resources';
 import client from 'shared/client';
 
@@ -9,9 +10,14 @@ export function loadChannelList(context, payload = {}) {
     payload[payload.listType] = true;
     delete payload.listType;
   }
-  return Channel.where(payload).then(channels => {
-    context.commit('ADD_CHANNELS', channels);
-    return channels;
+  return Channel.where(payload).then(pageData => {
+    if (pageData.results) {
+      context.commit('SET_PAGE', pageData);
+      context.commit('ADD_CHANNELS', pageData.results);
+      return pageData.results;
+    }
+    context.commit('ADD_CHANNELS', pageData);
+    return pageData;
   });
 }
 
@@ -52,6 +58,7 @@ export function createChannel(context) {
   };
   const channel = Channel.createObj(channelData);
   context.commit('ADD_CHANNEL', channel);
+  context.commit('ADD_CHANNEL_TO_PAGE', channel);
   return channel.id;
 }
 
@@ -64,10 +71,6 @@ export function commitChannel(
     thumbnailData = NOVALUE,
     language = NOVALUE,
     contentDefaults = NOVALUE,
-    demo_server_url = NOVALUE,
-    source_url = NOVALUE,
-    deleted = NOVALUE,
-    isPublic = NOVALUE,
     thumbnail = NOVALUE,
     thumbnail_encoding = NOVALUE,
     thumbnail_url = NOVALUE,
@@ -91,18 +94,6 @@ export function commitChannel(
     }
     if (language !== NOVALUE) {
       channelData.language = language;
-    }
-    if (demo_server_url !== NOVALUE) {
-      channelData.demo_server_url = demo_server_url;
-    }
-    if (source_url !== NOVALUE) {
-      channelData.source_url = source_url;
-    }
-    if (deleted !== NOVALUE) {
-      channelData.deleted = deleted;
-    }
-    if (isPublic !== NOVALUE) {
-      channelData.public = isPublic;
     }
     if (thumbnail !== NOVALUE) {
       channelData.thumbnail = thumbnail;
@@ -241,33 +232,34 @@ export function getChannelListDetails(context, { excluded = [], ...query }) {
 /* SHARING ACTIONS */
 
 export function loadChannelUsers(context, channelId) {
+  window.Inv = Invitation;
   return Promise.all([
     ChannelUser.where({ channel: channelId }),
     Invitation.where({ channel: channelId }),
   ]).then(results => {
     context.commit('SET_USERS_TO_CHANNEL', { channelId, users: results[0] });
-    context.commit('ADD_INVITATIONS', results[1]);
+    context.commit(
+      'ADD_INVITATIONS',
+      results[1].filter(i => !i.accepted && !i.declined && !i.revoked)
+    );
   });
 }
 
-export function sendInvitation(context, { channelId, email, shareMode }) {
-  return client
-    .post(window.Urls.send_invitation_email(), {
-      user_email: email,
-      share_mode: shareMode,
-      channel_id: channelId,
-    })
-    .then(response => {
-      context.commit('ADD_INVITATION', response.data);
-    });
+export async function sendInvitation(context, { channelId, email, shareMode }) {
+  let postedInvitation = await client.post(window.Urls.send_invitation_email(), {
+    user_email: email,
+    share_mode: shareMode,
+    channel_id: channelId,
+  });
+  await Invitation.transaction({ mode: 'rw', source: IGNORED_SOURCE }, () => {
+    return Invitation.table.put(postedInvitation.data);
+  });
+  return await context.commit('ADD_INVITATION', postedInvitation.data);
 }
 
 export function deleteInvitation(context, invitationId) {
-  // return Invitation.delete(invitationId).then(() => {
-  //   context.commit('DELETE_INVITATION', invitationId);
-  // });
   // Update so that other user's invitations disappear
-  return Invitation.update(invitationId, { declined: true }).then(() => {
+  return Invitation.update(invitationId, { revoked: true }).then(() => {
     context.commit('DELETE_INVITATION', invitationId);
   });
 }

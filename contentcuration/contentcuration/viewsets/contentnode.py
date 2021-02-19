@@ -21,6 +21,7 @@ from rest_framework.decorators import detail_route
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.serializers import ChoiceField
+from rest_framework.serializers import BooleanField
 from rest_framework.serializers import DictField
 from rest_framework.serializers import IntegerField
 from rest_framework.serializers import ValidationError
@@ -51,6 +52,7 @@ from contentcuration.viewsets.sync.constants import DELETED
 from contentcuration.viewsets.sync.constants import TASK_ID
 from contentcuration.viewsets.sync.utils import generate_delete_event
 from contentcuration.viewsets.sync.utils import generate_update_event
+from contentcuration.viewsets.sync.utils import log_sync_exception
 
 
 channel_query = Channel.objects.filter(main_tree__tree_id=OuterRef("tree_id"))
@@ -191,9 +193,10 @@ class ContentNodeListSerializer(BulkListSerializer):
 
 
 class ExtraFieldsSerializer(JSONFieldDictSerializer):
-    type = ChoiceField(
+    mastery_model = ChoiceField(
         choices=exercises.MASTERY_MODELS, allow_null=True, required=False
     )
+    randomize = BooleanField()
     m = IntegerField(allow_null=True, required=False)
     n = IntegerField(allow_null=True, required=False)
 
@@ -676,12 +679,20 @@ class ContentNodeViewSet(BulkUpdateMixin, ValuesViewset):
 
         try:
             target, position = self.validate_targeting_args(target, position)
-            try:
-                contentnode.move_to(target, position)
-            except ValueError:
-                raise ValidationError(
-                    "Invalid position argument specified: {}".format(position)
-                )
+
+            channel_id = target.channel_id
+
+            task_args = {
+                "user_id": self.request.user.id,
+                "channel_id": channel_id,
+                "node_id": contentnode.id,
+                "target_id": target.id,
+                "position": position,
+            }
+
+            task, task_info = create_async_task(
+                "move-nodes", self.request.user, **task_args
+            )
 
             return (
                 None,
@@ -751,3 +762,30 @@ class ContentNodeViewSet(BulkUpdateMixin, ValuesViewset):
             None,
             [generate_update_event(pk, CONTENTNODE, {TASK_ID: task_info.task_id})],
         )
+
+    def delete_from_changes(self, changes):
+        errors = []
+        changes_to_return = []
+        queryset = self.get_edit_queryset().order_by()
+        for change in changes:
+            try:
+                instance = queryset.get(**dict(self.values_from_key(change["key"])))
+
+                task_args = {
+                    "user_id": self.request.user.id,
+                    "channel_id": instance.channel_id,
+                    "node_id": instance.id,
+                }
+
+                task, task_info = create_async_task(
+                    "delete-node", self.request.user, **task_args
+                )
+            except ContentNode.DoesNotExist:
+                # If the object already doesn't exist, as far as the user is concerned
+                # job done!
+                pass
+            except Exception as e:
+                log_sync_exception(e)
+                change["errors"] = [str(e)]
+                errors.append(change)
+        return errors, changes_to_return

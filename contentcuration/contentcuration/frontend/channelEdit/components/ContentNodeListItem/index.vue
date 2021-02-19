@@ -148,6 +148,7 @@
 
 <script>
 
+  import { mapActions } from 'vuex';
   import ContentNodeValidator from '../ContentNodeValidator';
   import ContentNodeChangedIcon from '../ContentNodeChangedIcon';
   import TaskProgress from '../../views/progress/TaskProgress';
@@ -251,6 +252,7 @@
       copying(isCopying, wasCopying) {
         if (wasCopying && !isCopying) {
           this.highlight = true;
+          this.deleteTask({ task_id: this.taskId });
           setTimeout(() => {
             this.highlight = false;
           }, 2500);
@@ -258,6 +260,7 @@
       },
     },
     methods: {
+      ...mapActions('task', ['deleteTask']),
       handleTileClick(e) {
         // Ensures that clicking an icon button is not treated the same as clicking the card
         if (e.target.tagName !== 'svg' && !this.copying) {
@@ -328,7 +331,7 @@
     transition: background-color ease 500ms;
 
     .highlight & {
-      background-color: #e3f0ed;
+      background-color: var(--v-greenHighlightBackground-base);
     }
 
     &__action,

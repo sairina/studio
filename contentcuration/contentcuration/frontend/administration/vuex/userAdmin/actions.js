@@ -33,14 +33,14 @@ export function loadUsers({ commit }, params) {
 }
 
 export function updateUser(context, { id, ...data }) {
-  return User.update(id, data).then(response => {
+  return User.updateAsAdmin(id, data).then(response => {
     context.commit('UPDATE_USER', { id, ...data });
     return response.data;
   });
 }
 
-export function sendEmail(context, { emails = [], subject, message }) {
-  return client.post(window.Urls.send_custom_email(), { emails, subject, message });
+export function sendEmail(context, { query, subject, message }) {
+  return client.post(window.Urls.send_custom_email(), { query, subject, message });
 }
 
 export function deleteUser({ commit }, id) {
